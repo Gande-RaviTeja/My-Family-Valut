@@ -13,10 +13,23 @@ import mongoose from "mongoose";
 
 dotenv.config();
 
-const app = express();
+const allowedOrigins = process.env.CLIENT_ORIGIN
+  ? process.env.CLIENT_ORIGIN.split(",").map((o) => o.trim())
+  : ["http://localhost:5173", "http://localhost:3000", "http://localhost:5174"];
 
-app.use(cors({ origin: process.env.CLIENT_ORIGIN || "http://localhost:5173" }));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(null, true);
+    },
+    credentials: true,
+  })
+);
 app.use(express.json());
+
 
 app.get("/api/health", (req, res) => res.json({ status: "ok", dbConnected: mongoose.connection.readyState === 1 }));
 
