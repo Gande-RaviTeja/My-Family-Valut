@@ -1,0 +1,10 @@
+{
+  "name": "my-family-vault",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "postinstall": "cd server && npm install",
+    "build": "cd server && npm install",
+    "start": "node server/src/index.js"
+  }
+}
