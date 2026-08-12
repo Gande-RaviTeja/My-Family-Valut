@@ -1,5 +1,10 @@
-const rawBase = (import.meta.env.VITE_API_URL || "/api").trim().replace(/\/+$/, "");
+const defaultBaseUrl = import.meta.env.PROD
+  ? "https://my-family-vault.onrender.com/api"
+  : "/api";
+
+const rawBase = (import.meta.env.VITE_API_URL || defaultBaseUrl).trim().replace(/\/+$/, "");
 const BASE = rawBase.endsWith("/api") ? rawBase : `${rawBase}/api`;
+
 
 
 async function request(path, options = {}) {

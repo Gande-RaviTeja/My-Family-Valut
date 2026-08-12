@@ -13,21 +13,13 @@ import mongoose from "mongoose";
 
 dotenv.config();
 
-const allowedOrigins = process.env.CLIENT_ORIGIN
-  ? process.env.CLIENT_ORIGIN.split(",").map((o) => o.trim())
-  : ["http://localhost:5173", "http://localhost:3000", "http://localhost:5174"];
-
 app.use(
   cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      return callback(null, true);
-    },
+    origin: (origin, callback) => callback(null, true),
     credentials: true,
   })
 );
+
 app.use(express.json());
 
 
