@@ -1,6 +1,14 @@
 import { useState, useEffect } from "react";
 import { api } from "../api.js";
-import { signUpUser, loginUser as loginFirebaseUser, resetPassword } from "../firebase.js";
+import {
+  signUpUser,
+  loginUser as loginFirebaseUser,
+  resendVerificationEmail,
+  verifyEmailCode,
+  logoutFirebaseUser,
+  resetPassword,
+  auth,
+} from "../firebase.js";
 import { EyeIcon, EyeOffIcon } from "../components/icons.jsx";
 
 function PasswordInput({ value, onChange, placeholder = "••••••••", minLength = 6, required = true }) {
@@ -79,7 +87,15 @@ export default function Auth({ onLogin, onSignUp, onGuest }) {
     const path = window.location.pathname;
     const params = new URLSearchParams(window.location.search);
 
-    // 1. Invitation Token Parsing (/invite/:token, ?invite=token, or ?code=token)
+    // 1. Firebase Email Link Parsing (mode=verifyEmail & oobCode=...)
+    const mode = params.get("mode");
+    const oobCode = params.get("oobCode");
+    if (mode === "verifyEmail" && oobCode) {
+      handleFirebaseVerificationLink(oobCode);
+      return;
+    }
+
+    // 2. Invitation Token Parsing (/invite/:token, ?invite=token, or ?code=token)
     let token = params.get("invite") || params.get("code");
     if (!token && path.includes("/invite/")) {
       token = path.split("/invite/")[1]?.split("/")[0]?.split("?")[0];
@@ -87,21 +103,43 @@ export default function Auth({ onLogin, onSignUp, onGuest }) {
 
     if (token) {
       setInviteToken(token);
+      try {
+        localStorage.setItem("pending_invite_token", token);
+      } catch {}
       setTab("invite");
       fetchInviteDetails(token);
       return;
     }
 
-    // 2. Email Verification Link Parsing (/verify-email?token=...)
-    const vToken = params.get("token");
-    if (path.includes("/verify-email") || vToken) {
-      if (vToken) {
-        processEmailVerification(vToken, params.get("inviteToken"));
-      } else {
-        setTab("verify");
-      }
+    // 3. Email Verification Route Parsing (/verify-email)
+    if (path.includes("/verify-email")) {
+      setTab("verify");
     }
   }, []);
+
+  async function handleFirebaseVerificationLink(oobCode) {
+    setLoading(true);
+    setError("");
+    setInfoMessage("Verifying your email with Firebase...");
+    try {
+      await verifyEmailCode(oobCode);
+      const pendingInviteToken = localStorage.getItem("pending_invite_token") || inviteToken;
+      if (auth.currentUser?.email) {
+        await api.markEmailVerified(auth.currentUser.email, pendingInviteToken).catch(() => {});
+      }
+      if (pendingInviteToken) {
+        localStorage.removeItem("pending_invite_token");
+      }
+      await logoutFirebaseUser().catch(() => {});
+      setInfoMessage("Your email has been verified successfully! Please sign in to access your dashboard.");
+      setTab("login");
+    } catch (err) {
+      setError(err.message || "Verification link expired or invalid. Please sign in to request a fresh link.");
+      setTab("login");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function fetchInviteDetails(token) {
     setLoading(true);
@@ -124,34 +162,36 @@ export default function Auth({ onLogin, onSignUp, onGuest }) {
     }
   }
 
-  async function processEmailVerification(token, invToken) {
+  async function handleCheckVerified() {
     setLoading(true);
     setError("");
-    setInfoMessage("Verifying your email address...");
+    setInfoMessage("");
+    setResendSuccessMsg("");
     try {
-      const res = await api.verifyEmail(token, invToken);
-      if (res.user) {
-        setInfoMessage("Email verified successfully! Joining Family...");
-        setTimeout(() => {
-          onLogin(res.user);
-        }, 1200);
+      const currentUser = auth.currentUser;
+      if (currentUser) {
+        await currentUser.reload();
+        if (currentUser.emailVerified) {
+          const pendingInviteToken = localStorage.getItem("pending_invite_token") || inviteToken;
+          await api.markEmailVerified(currentUser.email, pendingInviteToken).catch(() => {});
+          if (pendingInviteToken) {
+            localStorage.removeItem("pending_invite_token");
+          }
+          await logoutFirebaseUser().catch(() => {});
+          setInfoMessage("Your email has been verified successfully! Please sign in to access your account.");
+          setTab("login");
+        } else {
+          setError("Your email has not been verified yet. Please check your inbox and click the verification link.");
+        }
       } else {
-        setInfoMessage("Email verified! You can now sign in.");
+        setInfoMessage("Please sign in with your credentials to verify your account status.");
         setTab("login");
       }
     } catch (err) {
-      setError(err.message || "Failed to verify email address.");
-      setTab("login");
+      setError(err.message || "Failed to check email verification status.");
     } finally {
       setLoading(false);
     }
-  }
-
-  function handleFillDemoCredentials() {
-    setLoginEmail("demo@myhome.app");
-    setLoginPassword("demo123");
-    setError("");
-    setInfoMessage("");
   }
 
   async function handleForgotPassword() {
@@ -172,7 +212,7 @@ export default function Auth({ onLogin, onSignUp, onGuest }) {
   }
 
   async function handleResendVerification() {
-    const emailToResend = pendingVerificationEmail || loginEmail.trim() || createEmail.trim();
+    const emailToResend = pendingVerificationEmail || loginEmail.trim() || createEmail.trim() || invitedEmail.trim();
     if (!emailToResend) {
       setError("Please enter your email address to resend verification link.");
       return;
@@ -181,10 +221,10 @@ export default function Auth({ onLogin, onSignUp, onGuest }) {
     setResendSuccessMsg("");
     setResendLoading(true);
     try {
-      await api.resendVerification(emailToResend);
+      await resendVerificationEmail(emailToResend, loginPassword);
       setResendSuccessMsg(`✉️ A fresh verification link has been sent to ${emailToResend}! Please check your inbox and spam folder.`);
     } catch (err) {
-      setResendSuccessMsg(`✉️ Verification link sent to ${emailToResend}. Please check your inbox.`);
+      setError(err.message || "Unable to send verification link.");
     } finally {
       setResendLoading(false);
     }
@@ -208,26 +248,37 @@ export default function Auth({ onLogin, onSignUp, onGuest }) {
 
       if (!isPlaceholderKey && !loginEmail.toLowerCase().includes("demo") && !loginEmail.toLowerCase().includes("test")) {
         try {
-          await loginFirebaseUser(loginEmail.trim(), loginPassword);
-          await api.markEmailVerified(loginEmail.trim(), inviteToken).catch(() => { });
+          const fbUser = await loginFirebaseUser(loginEmail.trim(), loginPassword);
+          const pendingInviteToken = localStorage.getItem("pending_invite_token") || inviteToken;
+          await api.markEmailVerified(fbUser.email, pendingInviteToken).catch(() => {});
+          if (pendingInviteToken) {
+            localStorage.removeItem("pending_invite_token");
+          }
         } catch (fbErr) {
-          if (fbErr.message && fbErr.message.toLowerCase().includes("verify")) {
+          if (fbErr.message && (fbErr.message.toLowerCase().includes("verify") || fbErr.code === "auth/email-not-verified")) {
             setIsUnverifiedLogin(true);
             setPendingVerificationEmail(loginEmail.trim());
-            setError("Your email is not verified.");
+            setError("Please verify your email before signing in.");
             setLoading(false);
             return;
+          } else {
+            throw fbErr;
           }
         }
+      }
+
+      const pendingInviteToken = localStorage.getItem("pending_invite_token") || inviteToken;
+      if (pendingInviteToken) {
+        await api.markEmailVerified(loginEmail.trim(), pendingInviteToken).catch(() => {});
       }
 
       const data = await api.loginUser({ email: loginEmail.trim(), password: loginPassword });
       onLogin(data.user);
     } catch (err) {
-      if (err.message && err.message.toLowerCase().includes("verify")) {
+      if (err.message && (err.message.toLowerCase().includes("verify") || err.code === "auth/email-not-verified")) {
         setIsUnverifiedLogin(true);
         setPendingVerificationEmail(loginEmail.trim());
-        setError("Your email is not verified.");
+        setError("Please verify your email before signing in.");
       } else {
         setError(err.message || "Invalid email or password");
       }
@@ -255,7 +306,7 @@ export default function Auth({ onLogin, onSignUp, onGuest }) {
       const cleanFamily = createFamilyName.trim() || `${createName.trim()}'s Family`;
 
       // 1. Create Family in MongoDB
-      const res = await api.createFamily({
+      await api.createFamily({
         name: createName.trim(),
         email: createEmail.trim(),
         password: createPassword,
@@ -263,7 +314,7 @@ export default function Auth({ onLogin, onSignUp, onGuest }) {
         familyName: cleanFamily,
       });
 
-      // 2. Firebase Auth signup (if key configured)
+      // 2. Firebase Auth signup (dispatches Firebase verification email)
       const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
       const isPlaceholderKey = !apiKey || apiKey === "YOUR_FIREBASE_API_KEY";
       if (!isPlaceholderKey) {
@@ -274,7 +325,7 @@ export default function Auth({ onLogin, onSignUp, onGuest }) {
         }
       }
 
-      // 3. Show Success Verification Page
+      // 3. Show Verification Page (Must NOT go to dashboard)
       setPendingVerificationEmail(createEmail.trim());
       setLoginEmail(createEmail.trim());
       setTab("verify");
@@ -334,7 +385,13 @@ export default function Auth({ onLogin, onSignUp, onGuest }) {
         confirmPassword: accConfirmPassword,
       });
 
-      // Firebase Auth signup (if key configured)
+      if (inviteToken) {
+        try {
+          localStorage.setItem("pending_invite_token", inviteToken);
+        } catch {}
+      }
+
+      // Firebase Auth signup (dispatches Firebase verification email)
       const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
       const isPlaceholderKey = !apiKey || apiKey === "YOUR_FIREBASE_API_KEY";
       if (!isPlaceholderKey && invitedEmail) {
@@ -345,8 +402,8 @@ export default function Auth({ onLogin, onSignUp, onGuest }) {
         }
       }
 
-      setPendingVerificationEmail(invitedEmail);
-      setLoginEmail(invitedEmail);
+      setPendingVerificationEmail(invitedEmail.trim());
+      setLoginEmail(invitedEmail.trim());
       setTab("verify");
     } catch (err) {
       setError(err.message || "Failed to create account.");
@@ -533,13 +590,13 @@ export default function Auth({ onLogin, onSignUp, onGuest }) {
           </div>
         )}
 
-        {/* VIEW 3: VERIFY EMAIL SUCCESS PAGE */}
+        {/* VIEW 3: VERIFY EMAIL PAGE */}
         {tab === "verify" && (
           <div style={{ textAlign: "center", padding: "10px 0" }}>
             <div style={{ fontSize: 44, marginBottom: 12 }}>✉️</div>
             <h2 className="auth-title" style={{ marginBottom: 8 }}>Verify Your Email</h2>
             <p className="auth-subtitle" style={{ fontSize: 14, color: "var(--ink-soft)", marginBottom: 24, lineHeight: 1.6 }}>
-              We've sent a verification link to your email address ({pendingVerificationEmail || loginEmail || createEmail}). Please verify your email before signing in.
+              Please check your email address ({pendingVerificationEmail || loginEmail || createEmail || invitedEmail}) and click the verification link to verify your account.
             </p>
 
             {resendSuccessMsg && (
@@ -552,16 +609,27 @@ export default function Auth({ onLogin, onSignUp, onGuest }) {
               <button
                 type="button"
                 className="btn-primary auth-submit-btn"
-                onClick={handleResendVerification}
-                disabled={resendLoading}
+                onClick={handleCheckVerified}
+                disabled={loading}
               >
-                {resendLoading ? "Sending Link..." : "Resend Verification Email"}
+                {loading ? "Checking Status..." : "I've Verified My Email ➔"}
               </button>
 
               <button
                 type="button"
                 className="btn-secondary auth-submit-btn"
-                onClick={() => {
+                onClick={handleResendVerification}
+                disabled={resendLoading}
+              >
+                {resendLoading ? "Sending Link..." : "Resend Verification Email ✉️"}
+              </button>
+
+              <button
+                type="button"
+                className="btn-secondary auth-submit-btn"
+                style={{ background: "transparent", border: "1px solid var(--border)", color: "var(--ink-soft)" }}
+                onClick={async () => {
+                  await logoutFirebaseUser().catch(() => {});
                   setTab("login");
                   setError("");
                   setInfoMessage("");
@@ -704,3 +772,4 @@ export default function Auth({ onLogin, onSignUp, onGuest }) {
     </div>
   );
 }
+

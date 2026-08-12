@@ -88,22 +88,12 @@ router.post("/create-family", async (req, res, next) => {
       role: "admin",
     });
 
-    // Send Verification Email
-    const clientOrigin = process.env.CLIENT_ORIGIN || "http://localhost:5173";
-    const verificationUrl = `${clientOrigin}/verify-email?token=${verificationToken}`;
-    const html = generateVerificationEmailHTML({ name: name.trim(), verificationUrl });
-    
-    sendEmail({
-      to: cleanEmail,
-      subject: "Verify your My Home account",
-      html,
-    }).catch((err) => console.error("Error sending verification email:", err));
-
+    // Account email verification is handled by Firebase Auth sendEmailVerification()
     res.status(201).json({
       success: true,
       email: cleanEmail,
       verificationToken,
-      message: "We've sent a verification link to your email address. Please verify your email before signing in.",
+      message: "Account created. Please verify your email before signing in.",
     });
 
   } catch (err) {

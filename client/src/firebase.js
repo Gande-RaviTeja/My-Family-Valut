@@ -7,6 +7,7 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   sendEmailVerification,
+  applyActionCode,
   sendPasswordResetEmail,
   signOut,
   updateProfile,
@@ -49,7 +50,7 @@ export async function signUpUser(email, password, displayName) {
   const user = userCredential.user;
 
   if (displayName) {
-    await updateProfile(user, { displayName });
+    await updateProfile(user, { displayName }).catch(() => {});
   }
 
   // Send email verification link to user's inbox with app redirect URL
@@ -71,33 +72,57 @@ export async function loginUser(email, password) {
 
   // Check if email has been verified
   if (!user.emailVerified) {
-    throw new Error(
-      "Your email is not verified yet. Please check your inbox and click the verification link before logging in."
-    );
+    // Sign out immediately so unverified session is not kept active
+    await signOut(auth).catch(() => {});
+    const err = new Error("Please verify your email before signing in.");
+    err.code = "auth/email-not-verified";
+    throw err;
   }
 
   return user;
 }
 
 // 3. Resend Verification Email
-export async function resendVerificationEmail() {
-  if (auth.currentUser) {
+export async function resendVerificationEmail(email, password) {
+  let targetUser = auth.currentUser;
+
+  // If auth.currentUser is not active, try signing in temporarily to dispatch verification email
+  if (!targetUser && email && password) {
     try {
-      await sendEmailVerification(auth.currentUser, getActionCodeSettings());
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      targetUser = userCredential.user;
     } catch {
-      await sendEmailVerification(auth.currentUser);
+      throw new Error("Unable to send verification email. Please check your credentials.");
+    }
+  }
+
+  if (targetUser) {
+    try {
+      await sendEmailVerification(targetUser, getActionCodeSettings());
+    } catch {
+      await sendEmailVerification(targetUser);
+    }
+    // If not verified, sign out after sending
+    if (!targetUser.emailVerified) {
+      await signOut(auth).catch(() => {});
     }
   } else {
-    throw new Error("No user currently logged in.");
+    throw new Error("Please enter your email and password to resend the verification email.");
   }
 }
 
-// 4. Send Password Reset Email
+// 4. Verify Email Code from Firebase link (oobCode)
+export async function verifyEmailCode(oobCode) {
+  await applyActionCode(auth, oobCode);
+}
+
+// 5. Send Password Reset Email
 export async function resetPassword(email) {
   await sendPasswordResetEmail(auth, email);
 }
 
-// 5. Sign Out
+// 6. Sign Out
 export async function logoutFirebaseUser() {
   await signOut(auth);
 }
+
