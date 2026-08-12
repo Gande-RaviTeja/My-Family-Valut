@@ -4,59 +4,11 @@ import nodemailer from "nodemailer";
  * Sends transactional email automatically via SMTP (Gmail / Outlook) or Resend API.
  */
 export async function sendEmail({ to, subject, html }) {
+  const apiKey = process.env.EMAIL_API_KEY;
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
-  const apiKey = process.env.EMAIL_API_KEY;
 
-  // 1. SMTP Transport (Gmail App Password, Outlook, or custom SMTP)
-  if (smtpUser && smtpPass) {
-    try {
-      const isGoogleAccount =
-        !process.env.SMTP_HOST ||
-        process.env.SMTP_HOST.includes("gmail") ||
-        smtpUser.includes("gmail") ||
-        smtpUser.includes("klh.edu.in");
-
-      const transporterConfig = isGoogleAccount
-        ? {
-            service: "gmail",
-            auth: {
-              user: smtpUser,
-              pass: smtpPass,
-            },
-          }
-
-        : {
-            host: process.env.SMTP_HOST,
-            port: parseInt(process.env.SMTP_PORT || "465"),
-            secure: process.env.SMTP_SECURE === "true" || process.env.SMTP_PORT === "465",
-            auth: {
-              user: smtpUser,
-              pass: smtpPass,
-            },
-            tls: {
-              rejectUnauthorized: false,
-            },
-          };
-
-      const transporter = nodemailer.createTransport(transporterConfig);
-
-
-      const info = await transporter.sendMail({
-        from: process.env.EMAIL_FROM || `"My Home Portal" <${smtpUser}>`,
-        to: Array.isArray(to) ? to.join(",") : to,
-        subject,
-        html,
-      });
-
-      console.log(`✉️ [REAL SMTP EMAIL SENT] To: ${to} | Message ID: ${info.messageId}`);
-      return { success: true, messageId: info.messageId };
-    } catch (err) {
-      console.error(`⚠️ SMTP Email Error: ${err.message}`);
-    }
-  }
-
-  // 2. Resend API Transport (if EMAIL_API_KEY is provided in .env)
+  // 1. Resend API Transport (HTTPS Port 443 - Fully supported on Render Free)
   if (apiKey) {
     try {
       const response = await fetch("https://api.resend.com/emails", {
@@ -66,7 +18,7 @@ export async function sendEmail({ to, subject, html }) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          from: process.env.EMAIL_FROM || "My Home Portal <onboarding@resend.dev>",
+          from: process.env.EMAIL_FROM || "My Home Vault <onboarding@resend.dev>",
           to: Array.isArray(to) ? to : [to],
           subject,
           html,
@@ -85,15 +37,48 @@ export async function sendEmail({ to, subject, html }) {
     }
   }
 
-  // 3. Simulated Fallback (when no SMTP credentials or API key are set in server/.env)
+  // 2. SMTP Transport (Gmail / Custom SMTP)
+  if (smtpUser && smtpPass) {
+    try {
+      const isGoogleAccount =
+        !process.env.SMTP_HOST ||
+        process.env.SMTP_HOST.includes("gmail") ||
+        smtpUser.includes("gmail");
+
+      const transporterConfig = isGoogleAccount
+        ? {
+            service: "gmail",
+            auth: { user: smtpUser, pass: smtpPass },
+          }
+        : {
+            host: process.env.SMTP_HOST,
+            port: parseInt(process.env.SMTP_PORT || "465"),
+            secure: process.env.SMTP_SECURE === "true" || process.env.SMTP_PORT === "465",
+            auth: { user: smtpUser, pass: smtpPass },
+            tls: { rejectUnauthorized: false },
+          };
+
+      const transporter = nodemailer.createTransport(transporterConfig);
+
+      const info = await transporter.sendMail({
+        from: process.env.EMAIL_FROM || `"My Home Portal" <${smtpUser}>`,
+        to: Array.isArray(to) ? to.join(",") : to,
+        subject,
+        html,
+      });
+
+      console.log(`✉️ [REAL SMTP EMAIL SENT] To: ${to} | Message ID: ${info.messageId}`);
+      return { success: true, messageId: info.messageId };
+    } catch (err) {
+      console.error(`⚠️ SMTP Email Error: ${err.message}`);
+    }
+  }
+
+  // 3. Simulated Fallback (for local testing without credentials)
   console.log(`\n==================================================`);
-  console.log(`✉️ [SIMULATED BACKEND EMAIL (No SMTP Credentials in .env)]`);
-  console.log(`TO: ${to}`);
-  console.log(`SUBJECT: ${subject}`);
-  console.log(`💡 To send REAL emails directly to inboxes, add SMTP credentials to server/.env:`);
-  console.log(`   SMTP_USER=your_email@gmail.com`);
-  console.log(`   SMTP_PASS=your_gmail_app_password`);
+  console.log(`✉️ [SIMULATED BACKEND EMAIL] To: ${to} | Subject: ${subject}`);
   console.log(`==================================================\n`);
 
   return { success: true, simulated: true };
 }
+
