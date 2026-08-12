@@ -11,15 +11,36 @@ export async function sendEmail({ to, subject, html }) {
   // 1. SMTP Transport (Gmail App Password, Outlook, or custom SMTP)
   if (smtpUser && smtpPass) {
     try {
-      const transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST || "smtp.gmail.com",
-        port: parseInt(process.env.SMTP_PORT || "587"),
-        secure: process.env.SMTP_SECURE === "true",
-        auth: {
-          user: smtpUser,
-          pass: smtpPass,
-        },
-      });
+      const isGoogleAccount =
+        !process.env.SMTP_HOST ||
+        process.env.SMTP_HOST.includes("gmail") ||
+        smtpUser.includes("gmail") ||
+        smtpUser.includes("klh.edu.in");
+
+      const transporterConfig = isGoogleAccount
+        ? {
+            service: "gmail",
+            auth: {
+              user: smtpUser,
+              pass: smtpPass,
+            },
+          }
+
+        : {
+            host: process.env.SMTP_HOST,
+            port: parseInt(process.env.SMTP_PORT || "465"),
+            secure: process.env.SMTP_SECURE === "true" || process.env.SMTP_PORT === "465",
+            auth: {
+              user: smtpUser,
+              pass: smtpPass,
+            },
+            tls: {
+              rejectUnauthorized: false,
+            },
+          };
+
+      const transporter = nodemailer.createTransport(transporterConfig);
+
 
       const info = await transporter.sendMail({
         from: process.env.EMAIL_FROM || `"My Home Portal" <${smtpUser}>`,
