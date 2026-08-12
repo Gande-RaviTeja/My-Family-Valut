@@ -38,10 +38,20 @@ router.post("/create-family", async (req, res, next) => {
 
     const existingUser = await User.findOne({ email: cleanEmail });
     if (existingUser) {
-      return res.status(400).json({
-        message: `An account with ${cleanEmail} is already registered. Please sign in instead.`,
-      });
+      if (existingUser.emailVerified || existingUser.isVerified) {
+        return res.status(400).json({
+          message: `An account with ${cleanEmail} is already registered. Please sign in instead.`,
+        });
+      }
+
+      // If user account exists but is unverified, remove stale unverified user & family records
+      if (existingUser.familyId) {
+        await Family.deleteOne({ _id: existingUser.familyId });
+        await FamilyMember.deleteMany({ familyId: existingUser.familyId });
+      }
+      await User.deleteOne({ _id: existingUser._id });
     }
+
 
     const cleanFamilyName = (familyName && familyName.trim()) ? familyName.trim() : `${name.trim()}'s Family`;
 
@@ -78,12 +88,24 @@ router.post("/create-family", async (req, res, next) => {
       role: "admin",
     });
 
+    // Send Verification Email
+    const clientOrigin = process.env.CLIENT_ORIGIN || "http://localhost:5173";
+    const verificationUrl = `${clientOrigin}/verify-email?token=${verificationToken}`;
+    const html = generateVerificationEmailHTML({ name: name.trim(), verificationUrl });
+    
+    sendEmail({
+      to: cleanEmail,
+      subject: "Verify your My Home account",
+      html,
+    }).catch((err) => console.error("Error sending verification email:", err));
+
     res.status(201).json({
       success: true,
       email: cleanEmail,
       verificationToken,
       message: "We've sent a verification link to your email address. Please verify your email before signing in.",
     });
+
   } catch (err) {
     next(err);
   }
@@ -384,17 +406,22 @@ router.post("/create-account-invite", async (req, res, next) => {
 
     let user = await User.findOne({ email: cleanEmail });
     if (user) {
-      if (user.familyId) {
-        const existingFamily = await Family.findById(user.familyId);
-        const existingFamilyName = existingFamily ? (existingFamily.name || existingFamily.familyName) : "another family";
+      if (user.emailVerified || user.isVerified) {
+        if (user.familyId) {
+          const existingFamily = await Family.findById(user.familyId);
+          const existingFamilyName = existingFamily ? (existingFamily.name || existingFamily.familyName) : "another family";
+          return res.status(400).json({
+            message: `The email address (${cleanEmail}) is already registered in "${existingFamilyName}". A user cannot belong to multiple families with the same email.`,
+          });
+        }
         return res.status(400).json({
-          message: `The email address (${cleanEmail}) is already registered in "${existingFamilyName}". A user cannot belong to multiple families with the same email.`,
+          message: `An account with ${cleanEmail} already exists. Please sign in to accept your invitation.`,
         });
       }
-      return res.status(400).json({
-        message: `An account with ${cleanEmail} already exists. Please sign in to accept your invitation.`,
-      });
+      // If existing user account is unverified, remove stale record
+      await User.deleteOne({ _id: user._id });
     }
+
 
     const verificationToken = generateSecureToken();
     const userColor = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];

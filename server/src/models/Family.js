@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import crypto from "crypto";
 
 const familySchema = new mongoose.Schema(
   {
@@ -11,6 +12,12 @@ const familySchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    inviteCode: {
+      type: String,
+      unique: true,
+      sparse: true,
+      default: () => "FAM-" + crypto.randomBytes(3).toString("hex").toUpperCase(),
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -20,3 +27,4 @@ const familySchema = new mongoose.Schema(
 );
 
 export default mongoose.model("Family", familySchema);
+
